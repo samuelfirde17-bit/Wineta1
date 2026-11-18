@@ -1,0 +1,421 @@
+import os
+import requests
+from flask import Flask, render_template_string, request, jsonify
+
+app = Flask(__name__)
+
+TELEGRAM_BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"
+ADMIN_CHAT_ID = "8735713440"
+
+FULL_APP_HTML = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Win እጣ & Bingo</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #0f172a; color: #ffffff; text-align: center; padding: 8px; margin: 0; }
+        h1, h2 { color: #38bdf8; margin-bottom: 6px; }
+        .card { background: #1e293b; padding: 14px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.4); max-width: 460px; margin: 0 auto; }
+        .btn { background-color: #0284c7; color: white; padding: 10px 14px; border: none; border-radius: 8px; margin-top: 8px; cursor: pointer; font-size: 14px; font-weight: bold; width: 100%; display: block; box-sizing: border-box; }
+        .btn-bingo { background-color: #10b981; color: white; }
+        .btn-deposit { background-color: #f59e0b; color: #0f172a; }
+        .btn-withdraw { background-color: #ef4444; color: white; }
+        .btn-back { background-color: #475569; color: white; margin-top: 10px; }
+        .hidden { display: none; }
+        input, textarea { width: 100%; padding: 10px; margin-top: 8px; border-radius: 8px; border: 1px solid #475569; background: #0f172a; color: white; box-sizing: border-box; font-size: 14px; }
+        .account-box, .confirm-box, .result-box { background: #334155; padding: 12px; border-radius: 8px; margin: 10px 0; border: 1px dashed #38bdf8; text-align: left; }
+        
+        /* Grids */
+        .grid-600 { display: grid; grid-template-columns: repeat(10, 1fr); gap: 3px; max-height: 150px; overflow-y: auto; margin: 6px 0; background: #0f172a; padding: 6px; border-radius: 8px; border: 1px solid #475569; }
+        .card-num-btn { background: #334155; color: white; border: 1px solid #475569; padding: 5px 0; font-size: 11px; font-weight: bold; border-radius: 4px; cursor: pointer; }
+        .card-num-btn.selected { background: #10b981; color: white; }
+
+        .lotto-grid { display: grid; grid-template-columns: repeat(10, 1fr); gap: 4px; margin: 10px 0; max-height: 220px; overflow-y: auto; background: #0f172a; padding: 6px; border-radius: 8px; border: 1px solid #475569; }
+        .lotto-num { background: #334155; color: #ffffff; padding: 8px 0; border-radius: 5px; font-size: 12px; font-weight: bold; cursor: pointer; border: 1px solid #475569; }
+        .lotto-num.taken-by-me { background: #10b981; color: white; cursor: not-allowed; }
+        .lotto-num.taken-by-other { background: #ef4444; color: white; cursor: not-allowed; }
+
+        /* Bingo Game Room */
+        .game-room-container { display: flex; gap: 6px; margin-top: 6px; align-items: flex-start; }
+        .master-board-side { flex: 1; background: #334155; padding: 4px; border-radius: 6px; font-size: 9px; }
+        .user-cards-stack { flex: 1.2; display: flex; flex-direction: column; gap: 6px; }
+        .user-card-box { background: #334155; padding: 4px; border-radius: 6px; }
+        .master-table { width: 100%; border-collapse: collapse; }
+        .master-table td { border: 1px solid #475569; padding: 2px; font-size: 9px; color: #cbd5e1; background: #1e293b; text-align: center; }
+        .master-table td.called { background: #f59e0b; color: #0f172a; font-weight: bold; }
+        .bingo-table { width: 100%; border-collapse: collapse; margin-top: 2px; }
+        .bingo-table td { width: 20%; height: 20px; background: #1e293b; border: 1px solid #475569; font-size: 10px; font-weight: bold; cursor: pointer; color: #ffffff; text-align: center; }
+        .bingo-table td.selected { background: #10b981 !important; color: white !important; }
+        .bingo-table td.free-cell { background: #e11d48 !important; color: white !important; }
+        .preview-side-by-side { display: flex; gap: 6px; justify-content: center; margin-top: 6px; }
+        .preview-box { flex: 1; background: #334155; padding: 6px; border-radius: 6px; }
+        .recent-balls-row { display: flex; justify-content: center; gap: 5px; margin: 4px 0; }
+        .mini-ball { background: #475569; color: #facc15; font-weight: bold; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; border: 1px solid #facc15; }
+    </style>
+</head>
+<body>
+
+    <!-- 1. ምዝገባ ገጽ -->
+    <div id="register-page" class="card">
+        <h1>Win እጣ & Bingo 🎟️</h1>
+        <p>እንኳን ወደ <b>Win እጣ & Bingo</b> በደህና መጡ!</p>
+        <button class="btn btn-bingo" onclick="completeRegistration()">📞 ተመዝገብ (Register)</button>
+    </div>
+
+    <!-- 2. ዋናው ሜኑ -->
+    <div id="main-menu" class="card hidden">
+        <h1>🎯 ጨዋታዎች ሜኑ</h1>
+        <p style="font-size: 13px; color: #94a3b8; margin: 0;">ተጠቃሚ: <b id="tg-username-display" style="color: #38bdf8;">@player</b></p>
+        <p style="color: #10b981; font-weight: bold; margin-top: 5px; font-size: 16px;">ባላንስ: <span id="user-balance">0.00</span> ብር</p>
+        
+        <button class="btn btn-bingo" onclick="showPage('bingo-step1')">1/ 🎯 Play Bingo</button>
+        <button class="btn" onclick="showPage('lottery-step1')">2/ 🎟️ Play Win እጣ</button>
+        <button class="btn btn-deposit" onclick="showPage('deposit-step1')">3/ 💰 Deposit (ገንዘብ ማስገቢያ)</button>
+        <button class="btn btn-withdraw" onclick="openWithdraw()">4/ 💸 Withdraw (ገንዘብ ማውጫ)</button>
+        <button class="btn" onclick="alert('ያለዎት ባላንስ: ' + currentBalance.toFixed(2) + ' ብር ነው።')">5/ 💳 Balance (ባላንስ ማረጋገጫ)</button>
+        <button class="btn" style="background-color: #6366f1;" onclick="window.location.href='https://t.me/sam3ifj'">6/ ☎️ Support (@sam3ifj)</button>
+    </div>
+
+    <!-- ================= BINGO MODULE ================= -->
+    <div id="bingo-step1" class="card hidden">
+        <h2>🎯 Play Bingo</h2>
+        <p>የሚፈልጉትን የካርቴላ ዋጋ (ብር) ይምረጡ፡</p>
+        <button class="btn btn-bingo" onclick="selectBingoPrice(10)">10 ብር</button>
+        <button class="btn btn-bingo" onclick="selectBingoPrice(20)">20 ብር</button>
+        <button class="btn btn-bingo" onclick="selectBingoPrice(50)">50 ብር</button>
+        <button class="btn btn-bingo" onclick="selectBingoPrice(100)">100 ብር</button>
+        <button class="btn btn-back" onclick="showPage('main-menu')">⬅️ ወደ ዋናው ሜኑ</button>
+    </div>
+
+    <div id="bingo-step2" class="card hidden">
+        <h2>🏷️ ካርቴላ ይምረጡ (1 - 600)</h2>
+        <p style="font-size: 12px; margin: 4px 0;">ዋጋ: <b id="bingo-price-display" style="color: #f59e0b;">0</b> ብር | የተመረጡ: <b id="selected-cards-badge" style="color: #10b981;">0/2</b></p>
+        <div class="grid-600" id="grid-600-container"></div>
+        <div class="preview-side-by-side">
+            <div class="preview-box">
+                <div style="font-size: 11px; color: #38bdf8;">ካርቴላ #<span id="prev-id-1">-</span></div>
+                <table class="bingo-table" id="preview-table-1"><tbody></tbody></table>
+            </div>
+            <div class="preview-box">
+                <div style="font-size: 11px; color: #38bdf8;">ካርቴላ #<span id="prev-id-2">-</span></div>
+                <table class="bingo-table" id="preview-table-2"><tbody></tbody></table>
+            </div>
+        </div>
+        <button class="btn btn-bingo" id="proceed-btn" onclick="proceedToGame()" style="display:none; margin-top: 8px;">🚀 ወደ ጨዋታው ግባ</button>
+        <button class="btn btn-back" onclick="showPage('bingo-step1')">⬅️ ተመለስ</button>
+    </div>
+
+    <div id="bingo-game-room" class="card hidden" style="max-width: 480px;">
+        <h2>🎯 የቢንጎ ጨዋታ በሂደት ላይ</h2>
+        <div style="font-size: 12px; color: #cbd5e1; background: #334155; padding: 6px; border-radius: 6px; margin-bottom: 6px;">
+            አሁን የተጠራው: <b id="current-called-ball" style="color: #f59e0b; font-size: 18px;">-</b>
+        </div>
+        <div class="recent-balls-row" id="recent-5-balls">
+            <div class="mini-ball">-</div><div class="mini-ball">-</div><div class="mini-ball">-</div><div class="mini-ball">-</div><div class="mini-ball">-</div>
+        </div>
+        <div class="game-room-container">
+            <div class="master-board-side">
+                <div style="font-weight: bold; color: #38bdf8; margin-bottom: 2px;">ማስተር ቦርድ</div>
+                <table class="master-table" id="ordered-master-table"><tbody></tbody></table>
+            </div>
+            <div class="user-cards-stack" id="user-cards-flexbox"></div>
+        </div>
+        <button class="btn btn-bingo" onclick="manualCallBingoWin()" style="margin-top: 10px;">📢 BINGO!</button>
+        <button class="btn btn-back" onclick="showPage('main-menu')" style="margin-top: 6px;">⬅️ ጨዋታውን አቁም</button>
+    </div>
+
+    <div id="bingo-result" class="card hidden">
+        <h2>🎉 BINGO አሸናፊ! 🎉</h2>
+        <div class="result-box">
+            <p style="color: #10b981; font-weight: bold;">🏆 አሸናፊ: <span id="bingo-winner-user">@winner</span></p>
+            <p style="color: #f59e0b;">💰 ሽልማት: <span id="bingo-winner-prize">0</span> ብር</p>
+        </div>
+        <button class="btn btn-bingo" onclick="showPage('bingo-step1')">🔄 ድጋሚ ተጫወት</button>
+        <button class="btn btn-back" onclick="showPage('main-menu')">⬅️ ወደ ዋናው ሜኑ</button>
+    </div>
+
+    <!-- ================= LOTTERY MODULE ================= -->
+    <div id="lottery-step1" class="card hidden">
+        <h2>🎟️ የዕጣ ዋጋ ይምረጡ</h2>
+        <p>የሚፈልጉትን የቲኬት ዋጋ (ብር) ይምረጡ፡</p>
+        <button class="btn" onclick="selectLotteryPrice(50)">1/ 50 ብር</button>
+        <button class="btn" onclick="selectLotteryPrice(100)">2/ 100 ብር</button>
+        <button class="btn" onclick="selectLotteryPrice(200)">3/ 200 ብር</button>
+        <button class="btn" onclick="selectLotteryPrice(300)">4/ 300 ብር</button>
+        <button class="btn" onclick="selectLotteryPrice(400)">5/ 400 ብር</button>
+        <button class="btn" onclick="selectLotteryPrice(500)">6/ 500 ብር</button>
+        <button class="btn btn-back" onclick="showPage('main-menu')">⬅️ ወደ ዋናው ሜኑ</button>
+    </div>
+
+    <div id="lottery-step2" class="card hidden">
+        <h2>👥 የተጫዋች ብዛት ይምረጡ</h2>
+        <p>ዋጋ፡ <b id="lotto-price-display" style="color: #f59e0b;">0</b> ብር</p>
+        <button class="btn btn-bingo" onclick="startLotteryGrid(20)">20 ተጫዋች</button>
+        <button class="btn btn-bingo" onclick="startLotteryGrid(50)">50 ተጫዋች</button>
+        <button class="btn btn-bingo" onclick="startLotteryGrid(100)">100 ተጫዋች</button>
+        <button class="btn btn-back" onclick="showPage('lottery-step1')">⬅️ ተመለስ</button>
+    </div>
+
+    <div id="lottery-step3" class="card hidden">
+        <h2>🔢 የዕጣ ቁጥር ይምረጡ (1-100)</h2>
+        <p>ባላንስ: <b id="grid-balance" style="color: #10b981;">0</b> ብር</p>
+        <div class="lotto-grid" id="lotto-numbers-container"></div>
+        <button class="btn btn-deposit" onclick="simulateOtherPlayers()">⚡ ቀሪዎችን አስገባ</button>
+        <button class="btn btn-back" onclick="showPage('main-menu')">⬅️ ወደ ዋናው ሜኑ</button>
+    </div>
+
+    <div id="lottery-result" class="card hidden">
+        <h2>🎉 ዕጣው ወጥቷል 🎉</h2>
+        <div class="result-box">
+            <p style="color: #f59e0b;">🥇 1ኛ: <span id="win1-user">@user1</span> (ቁጥር <span id="win1-num">0</span>) — <span id="win1-amt">0</span> ብር</p>
+        </div>
+        <button class="btn btn-bingo" onclick="showPage('lottery-step1')">🔄 ድጋሚ ተጫወት</button>
+        <button class="btn btn-back" onclick="showPage('main-menu')">⬅️ ወደ ዋናው ሜኑ</button>
+    </div>
+
+    <!-- ================= DEPOSIT & WITHDRAW ================= -->
+    <div id="deposit-step1" class="card hidden">
+        <h2>💰 ገንዘብ ማስገቢያ (Deposit)</h2>
+        <input type="number" id="deposit-amount" placeholder="መጠን (ለምሳሌ፡ 100)" min="10">
+        <button class="btn btn-deposit" onclick="submitDeposit()">✅ ዴፖዚት ላክ</button>
+        <button class="btn btn-back" onclick="showPage('main-menu')">⬅️ ተመለስ</button>
+    </div>
+
+    <div id="withdraw-step1" class="card hidden">
+        <h2>💸 ገንዘብ ማውጫ (Withdraw)</h2>
+        <p>ያለዎት: <b id="w-avail-bal">0.00</b> ብር</p>
+        <button class="btn btn-withdraw" onclick="alert('የዊዝድሮ ጥያቄ ተልኳል!')">ዊዝድሮ አድርግ</button>
+        <button class="btn btn-back" onclick="showPage('main-menu')">⬅️ ተመለስ</button>
+    </div>
+
+    <script>
+        let telegramUsername = "@samuel_win";
+        let telegramUserId = "123456789";
+        let currentBalance = 0.00;
+        let selectedBingoPrice = 0, selectedUserCards = [];
+        let selectedLottoPrice = 0, selectedMaxPlayers = 0, takenTickets = {};
+        let calledBallsList = [], autoCallerInterval = null;
+
+        function showPage(pageId) {
+            const pages = ['register-page', 'main-menu', 'bingo-step1', 'bingo-step2', 'bingo-game-room', 'bingo-result', 'lottery-step1', 'lottery-step2', 'lottery-step3', 'lottery-result', 'deposit-step1', 'withdraw-step1'];
+            pages.forEach(p => document.getElementById(p).classList.add('hidden'));
+            document.getElementById(pageId).classList.remove('hidden');
+        }
+
+        function updateBalanceUI() {
+            document.getElementById('user-balance').innerText = currentBalance.toFixed(2);
+            document.getElementById('grid-balance').innerText = currentBalance.toFixed(2);
+        }
+
+        function completeRegistration() { alert('ምዝገባዎ ተጠናቋል!'); showPage('main-menu'); }
+
+        // BINGO LOGIC
+        function selectBingoPrice(price) {
+            if (currentBalance < price) { alert('በቂ ባላንስ የለዎትም!'); showPage('deposit-step1'); return; }
+            selectedBingoPrice = price;
+            document.getElementById('bingo-price-display').innerText = price;
+            selectedUserCards = [];
+            buildGrid600();
+            showPage('bingo-step2');
+        }
+
+        function buildGrid600() {
+            const container = document.getElementById('grid-600-container');
+            container.innerHTML = '';
+            for (let i = 1; i <= 600; i++) {
+                const btn = document.createElement('button');
+                btn.className = 'card-num-btn';
+                btn.innerText = i;
+                if (selectedUserCards.includes(i)) btn.classList.add('selected');
+                btn.onclick = () => {
+                    if (selectedUserCards.includes(i)) {
+                        selectedUserCards = selectedUserCards.filter(c => c !== i);
+                    } else {
+                        if (selectedUserCards.length >= 2) { alert('2 ካርቴላ ብቻ ይቻላል!'); return; }
+                        selectedUserCards.push(i);
+                    }
+                    buildGrid600();
+                    document.getElementById('selected-cards-badge').innerText = selectedUserCards.length + "/2";
+                    document.getElementById('proceed-btn').style.display = selectedUserCards.length > 0 ? "block" : "none";
+                };
+                container.appendChild(btn);
+            }
+        }
+
+        function proceedToGame() {
+            const cost = selectedUserCards.length * selectedBingoPrice;
+            if (currentBalance < cost) { alert('በቂ ባላንስ የለዎትም!'); return; }
+            currentBalance -= cost;
+            updateBalanceUI();
+            
+            calledBallsList = [];
+            showPage('bingo-game-room');
+            buildMasterBoard();
+            buildUserCards();
+            if (autoCallerInterval) clearInterval(autoCallerInterval);
+            autoCallerInterval = setInterval(callBall, 3000);
+        }
+
+        function buildMasterBoard() {
+            const tbody = document.querySelector('#ordered-master-table tbody');
+            tbody.innerHTML = '';
+            for (let r = 0; r < 15; r++) {
+                const tr = document.createElement('tr');
+                [r+1, r+16, r+31, r+46, r+61].forEach(n => {
+                    const td = document.createElement('td');
+                    td.id = 'm-' + n;
+                    td.innerText = n;
+                    tr.appendChild(td);
+                });
+                tbody.appendChild(tr);
+            }
+        }
+
+        function buildUserCards() {
+            const stack = document.getElementById('user-cards-flexbox');
+            stack.innerHTML = '';
+            selectedUserCards.forEach((cNum, idx) => {
+                const box = document.createElement('div');
+                box.className = 'user-card-box';
+                box.innerHTML = `<div style="font-size:10px; color:#10b981;">ካርቴላ #${cNum}</div><table class="bingo-table" id="card-${idx}"><tbody></tbody></table>`;
+                stack.appendChild(box);
+                const tbody = box.querySelector('tbody');
+                for (let r = 0; r < 5; r++) {
+                    const tr = document.createElement('tr');
+                    for (let c = 0; c < 5; c++) {
+                        const td = document.createElement('td');
+                        td.innerText = (c === 2 && r === 2) ? "FREE" : Math.floor(Math.random() * 15) + 1;
+                        if (td.innerText === "FREE") td.classList.add('selected', 'free-cell');
+                        td.onclick = () => { if (calledBallsList.includes(parseInt(td.innerText))) td.classList.toggle('selected'); };
+                        tr.appendChild(td);
+                    }
+                    tbody.appendChild(tr);
+                }
+            });
+        }
+
+        function callBall() {
+            let avail = [];
+            for (let i = 1; i <= 75; i++) if (!calledBallsList.includes(i)) avail.push(i);
+            if (avail.length === 0) return;
+            let ball = avail[Math.floor(Math.random() * avail.length)];
+            calledBallsList.push(ball);
+            document.getElementById('current-called-ball').innerText = ball;
+            let mCell = document.getElementById('m-' + ball);
+            if (mCell) mCell.classList.add('called');
+        }
+
+        function manualCallBingoWin() {
+            clearInterval(autoCallerInterval);
+            let prize = selectedBingoPrice * 30;
+            currentBalance += prize;
+            updateBalanceUI();
+            document.getElementById('bingo-winner-prize').innerText = prize;
+            showPage('bingo-result');
+        }
+
+        // LOTTERY LOGIC
+        function selectLotteryPrice(price) {
+            if (currentBalance < price) { alert('በቂ ባላንስ የለዎትም!'); showPage('deposit-step1'); return; }
+            selectedLottoPrice = price;
+            document.getElementById('lotto-price-display').innerText = price;
+            showPage('lottery-step2');
+        }
+
+        function startLotteryGrid(maxP) {
+            selectedMaxPlayers = maxP;
+            takenTickets = {};
+            takenTickets[7] = "@player_test";
+            updateBalanceUI();
+            renderLottoGrid();
+            showPage('lottery-step3');
+        }
+
+        function renderLottoGrid() {
+            const container = document.getElementById('lotto-numbers-container');
+            container.innerHTML = '';
+            for (let i = 1; i <= 100; i++) {
+                const div = document.createElement('div');
+                div.className = 'lotto-num';
+                div.innerText = i;
+                if (takenTickets[i]) {
+                    div.classList.add(takenTickets[i] === telegramUsername ? 'taken-by-me' : 'taken-by-other');
+                } else {
+                    div.onclick = () => {
+                        if (currentBalance < selectedLottoPrice) { alert('በቂ ባላንስ የለዎትም!'); return; }
+                        currentBalance -= selectedLottoPrice;
+                        takenTickets[i] = telegramUsername;
+                        updateBalanceUI();
+                        renderLottoGrid();
+                        if (Object.keys(takenTickets).length >= selectedMaxPlayers) setTimeout(drawLottery, 500);
+                    };
+                }
+                container.appendChild(div);
+            }
+        }
+
+        function simulateOtherPlayers() {
+            let avail = [];
+            for (let i = 1; i <= 100; i++) if (!takenTickets[i]) avail.push(i);
+            while (Object.keys(takenTickets).length < selectedMaxPlayers && avail.length > 0) {
+                let chosen = avail.splice(Math.floor(Math.random() * avail.length), 1)[0];
+                takenTickets[chosen] = "@bot_user";
+            }
+            renderLottoGrid();
+            setTimeout(drawLottery, 600);
+        }
+
+        function drawLottery() {
+            let pool = selectedLottoPrice * selectedMaxPlayers;
+            let p1 = pool * 0.60;
+            document.getElementById('win1-amt').innerText = p1.toFixed(0);
+            currentBalance += p1;
+            updateBalanceUI();
+            showPage('lottery-result');
+        }
+
+        function submitDeposit() {
+            const amt = parseFloat(document.getElementById('deposit-amount').value);
+            if (!amt || amt <= 0) { alert('እባክዎ ትክክለኛ መጠን ያስገቡ!'); return; }
+            currentBalance += amt;
+            updateBalanceUI();
+            alert('✅ ዴፖዚትዎ ተሳክቷል! ' + amt + ' ብር ተጨምሯል።');
+            showPage('main-menu');
+        }
+
+        function openWithdraw() {
+            document.getElementById('w-avail-bal').innerText = currentBalance.toFixed(2);
+            showPage('withdraw-step1');
+        }
+    </script>
+</body>
+</html>
+"""
+
+@app.route('/')
+def home():
+    return "Win እጣ & Bingo Server is Active!"
+
+@app.route('/miniapp')
+def mini_app():
+    return render_template_string(FULL_APP_HTML)
+
+@app.route('/api/deposit_request', methods=['POST'])
+def deposit_request():
+    data = request.json
+    amount = data.get('amount')
+    username = data.get('username')
+    if TELEGRAM_BOT_TOKEN != "YOUR_BOT_TOKEN_HERE":
+        msg = f"🔔 *አዲስ የዲፖዚት ጥያቄ!*\n\n👤 ተጠቃሚ: {username}\n💰 መጠን: {amount} ብር"
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", json={
+            "chat_id": ADMIN_CHAT_ID,
+            "text": msg,
+            "parse_mode": "Markdown"
+        })
+    return jsonify({'status': 'success'})
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)
